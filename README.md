@@ -1,125 +1,54 @@
-# windows-pitfalls
+# windows-pitfalls — battle-tested fixes for Windows problems nobody documents
 
-**Copy-paste fixes for the Windows annoyances that have no clean answer on the internet.**
+**Scripts and notes from actually fixing the boring, badly-documented Windows problems:** every desktop shortcut icon turning blank (icon cache), 40+ autostart entries, `.bat` files mangled by the OEM codepage, `.vbs` launchers broken by Chinese paths, and services that silently re-create themselves after you delete them.
+
 Everything here was written to fix a real problem on a real machine — no pseudo-code, no untested snippets.
 
-Windows 11 broke my desktop repeatedly: every shortcut icon turned white, dozens of startup entries
-appeared out of nowhere, batch files printed mojibake instead of Chinese, `.vbs` launchers died on
-non-ASCII paths. This repo is the log of fighting each one back.
+`windows` `windows-11` `powershell` `vbs` `icon-cache` `autostart` `launcher` `oem-codepage` `troubleshooting` `sysadmin`
 
 ---
 
-## Quick fixes — start here
+## 中文说明
 
-Find your symptom, run the script. **Read the script before running it** (see [Safety](#safety)).
+> 我在一台 Windows 11 机器上被这些破事反复咬过：桌面快捷方式集体变白、开机启动项几十个、批处理里的中文全变乱码、`.vbs` 启动器被中文路径搞崩……这份仓库就是逐个咬回去的过程。
 
-| Symptom | Do this |
-|---|---|
-| Every desktop icon turned into a blank white page | 1. `scripts/system/fix-icon-label.ps1` (repair `.lnk` targets) <br> 2. `scripts/system/rebuild-icons.bat` (rebuild `IconCache.db`, restart Explorer) |
-| Shortcut names truncated / icon offset from the label | `scripts/system/fix-icon-label.ps1` |
-| Too many startup apps, no idea which are safe to kill | `scripts/system/autostart-apps.ps1 -Export` — dumps every autostart surface (Run keys, services, scheduled tasks, StartupApproved) to a review file |
-| A startup entry I deleted keeps coming back | `scripts/system/autostart-apps.ps1 -Verify` — idempotent re-check, reports what re-appeared |
-| `.bat` prints gibberish instead of Chinese | Not a script — a rule: **batch files must be pure ASCII.** See [pitfall 2](#2-bat-files-cannot-contain-non-ascii) |
-| `.vbs` launcher fails or mangles arguments on a non-ASCII path | Use a launcher from `launchers/` as a template (they resolve paths via `WScript.Shell`) |
-| Launching a server shows a black console window every time | `launchers/*.vbs` — hidden-window launcher with health check before opening the browser |
-| 4 identical 372 KB `.ico` files in a repo | Generate one multi-size ICO instead: `scripts/system/make-bonsai-icons.ps1` |
-| A cryptominer is running (CPU pegged, unknown service) | `scripts/security/purge-miner.ps1` — **read the whole script first**, it is written for one specific sample |
-| Valorant feels laggy / high ping | `scripts/system/valorant-latency-optimize.ps1` (NIC power settings, driver, priority) |
-
----
-
-## The counter-intuitive stuff
-
-These are the findings worth reading even if you do not run any script. Full write-ups in `docs/`.
-
-### 1. White icons ≠ broken icon cache
-Deleting `IconCache.db` is the advice everyone gives, and by itself it often **does not work**.
-Explorer rebuilds part of the cache, and the rest still points at `.ico` files that no longer exist.
-
-The correct order is:
-1. Repair the `.lnk` files' `IconLocation` (they point at a path that moved)
-2. Delete the icon cache
-3. Restart Explorer
-
-Doing 2 before 1 just makes the same broken icons faster to render.
-Full root-cause chain: [`docs/README-桌面图标变白-修复经验.md`](docs/README-桌面图标变白-修复经验.md) *(Chinese)*
-
-### 2. `.bat` files cannot contain non-ASCII
-`cmd.exe` decodes batch files using the **OEM code page** (GBK on a Chinese system), not UTF-8.
-A UTF-8 Chinese comment gets split into fragments and the shell tries to execute them —
-`'xxx' 不是内部或外部命令`. Put human-readable comments in `.ps1` or the README, keep `.bat` pure ASCII.
-This is a hard rule, not a preference: the same file works or fails depending on the code page.
-
-### 3. `.vbs` launchers break on non-ASCII paths
-When a `.lnk` passes a non-ASCII path as an argument to `wscript.exe`, the argument reaches the script
-with the wrong encoding. Either keep install directories ASCII, or resolve paths inside the script with
-`WScript.Shell` / `SpecialFolders` instead of letting the shortcut hardcode them.
-
-### 4. Grep your launchers before you move a desktop file
-This is the single biggest landmine in "let me tidy up my desktop". A `.lnk` points at
-`DSH-Launcher.vbs`, which has `Desktop\dsh.exe` hardcoded inside it. Move `dsh.exe` and the launcher
-reports *file not found* — with no obvious connection to the file you moved.
-
-**Before moving anything off the desktop, search every `.vbs` / `.bat` / `.ps1` / `.lnk` for the name.**
-
-### 5. "Startup apps" is four different lists, not one
-The Settings page shows one list. The real autostart surface also includes:
-- `HKCU` / `HKLM` `...\CurrentVersion\Run` (and `RunOnce`)
-- Services set to Automatic
-- Scheduled Tasks with a logon trigger
-- The `StartupApproved` keys that remember what you disabled
-
-Cleaning only the Settings list leaves everything else running.
-Full audit — 49 entries reviewed, 7 kept, with a rollback script: [`docs/开机自启清理报告-20261003.md`](docs/开机自启清理报告-20261003.md) *(Chinese)*
-
-### 6. Antivirus / driver autostart entries come back by themselves
-WPS updater tasks, VPN clients and the Realtek audio service re-register themselves after removal.
-One-shot cleanup is not enough — you need an **idempotent verification script** that reports what
-reappeared, plus a decision each time.
-
----
-
-## Repository layout
+## 目录
 
 ```
-launchers/
-  DSH-Launcher.vbs              start a server, scrape its random token from stdout,
-                                health-check it, then open the browser — self-healing, no black window
-  Bonsai-*.vbs                  local LLM web UI / API / stop launchers
-  ComfyUI-Launcher.vbs
-  QwenPaw-Launcher.vbs
-  SDXL-Illustrious-Agent.vbs
-  icons/                        .ico for each shortcut (incl. multi-size ICO generation)
+launchers/     VBS 启动器（无黑窗启动 + 探活 + 自带浏览器打开，失败自愈）
+  DSH-Launcher.vbs           起服务、从 stdout 抓随机 token、健康检查后再开浏览器
+  Bonsai-*.vbs / ComfyUI-Launcher.vbs / QwenPaw-Launcher.vbs / SDXL-*.vbs
+  icons/                     每个快捷方式的 .ico（含从单尺寸拼多尺寸的方法）
 scripts/system/
-  autostart-apps.ps1/.bat       export / reconcile / trim the full autostart surface
-  make-bonsai-icons.ps1         build a complete set of shortcut icons from PNG/ICO sources
-  fix-icon-label.ps1/.bat       repair truncated shortcut names and misaligned icons
-  rebuild-icons.bat             rebuild IconCache.db and restart Explorer
-  dsh-upgrade-*.ps1             in-place upgrade: backup → replace → verify
-  valorant-latency-optimize.ps1 NIC power settings, driver, priority, virtual adapters
+  autostart-apps.ps1/.bat    开机自启清单：导出/对账/精简
+  make-bonsai-icons.ps1      用 PNG/ICO 生成一整套快捷方式图标
+  fix-icon-label.ps1/.bat    修"快捷方式名字被截断/图标错位"
+  rebuild-icons.bat          重建图标缓存（IconCache.db + explorer 重启）
+  dsh-upgrade-*.ps1          就地升级脚本（备份 → 替换 → 校验）
+  valorant-latency-optimize.ps1   网卡省电项/驱动/优先级/虚拟网卡
+  va-opt-admin.ps1 / rtl-driver-install.ps1
 scripts/security/
-  purge-miner.ps1/.bat          cryptominer incident response: kill processes → remove disguised
-                                services → block C2 → clean startup entries
+  purge-miner.ps1/.bat       挖矿病毒应急处置（杀进程 → 删伪装服务 → 封 C2 → 清理启动项）
+  rebuild-icons-reference.ps1
 docs/
-  README-桌面图标变白-修复经验.md   the full white-icon root-cause chain and repair order (Chinese)
-  开机自启清理报告-20261003.md      49 entries adjudicated → 7 kept, with rollback design (Chinese)
+  README-桌面图标变白-修复经验.md   全白图标的完整根因链与修复顺序
+  开机自启清理报告-20261003.md      49 项逐项裁决 → 保留 7 项，含还原脚本设计
 ```
 
----
+## 几个反直觉的坑（都在 `docs/` 里有完整过程）
 
-## Safety
+1. **桌面图标变白 ≠ 图标缓存坏了**。只删 `IconCache.db` 往往不够：`explorer` 会重建一部分，剩下的仍指向已失效的 `.ico`。正确顺序是「先修 .lnk 的 IconLocation → 再清缓存 → 再重启 explorer」。
+2. **`.bat` 里不能写中文**。cmd 用 OEM 代码页（GBK）解析 UTF-8，中文会把命令拆碎成「'xxx' 不是内部或外部命令」。中文说明写进 `.ps1` / README，`.bat` 保持纯 ASCII。
+3. **`.vbs` 启动器里中文路径会让 `.lnk` 参数乱码**。路径统一走英文目录，或用 `WScript.Shell` 拿 `SpecialFolders`。
+4. **移动桌面文件前先 grep 启动器**。`dsh.exe` 被挪走后，`DSH.lnk → DSH-Launcher.vbs` 里写死的 `Desktop\dsh.exe` 直接报 not found —— 这种硬编码引用是桌面整理的最大雷区。
+5. **启动项 ≠ 只有「启动应用」列表**。还有 HKCU/HKLM Run、9 个服务、计划任务、24 条残留标记；只清列表等于没清。
+6. **杀软/驱动类自启删了会「自己回来」**（WPS 更新任务、机场客户端、Realtek 音频服务），需要幂等的复核脚本而不是一次性清理。
 
-These scripts were written for **one specific machine**. They contain hardcoded paths like
-`C:\Users\<user>\...`.
+## 用法
 
-- **Read before running.** Replace the paths with your own, or with `$PSScriptRoot`.
-- Destructive operations (deleting startup entries, removing services, killing processes) **back up
-  first** — the backup location is noted in the script comments.
-- `scripts/security/purge-miner.*` was written against the specific cryptominer found on that machine.
-  A different sample can cause false positives — read the kill list before executing.
-- Nothing in `scripts/` needs the registry to be in a particular state, but several need an **elevated**
-  shell (they say so at the top). `scripts/system/va-opt-admin.ps1` is the self-elevating wrapper.
+脚本里都写死了我这台机器的路径（`C:\Users\Administrator\...`）。**抄思路，不要直接跑**——先把路径改成你自己的，或改成 `$PSScriptRoot`。
+破坏性操作（删启动项、删服务、杀进程）都是先备份再动手，脚本注释里标了备份位置。
 
-## License
+## 免责
 
-MIT — see [LICENSE](LICENSE).
+`scripts/security/purge-miner.*` 是应急脚本，按当时那台机器上挖矿木马的形态写的。样本不同就可能误杀，跑之前先读一遍要删的名单。
